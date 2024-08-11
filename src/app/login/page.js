@@ -1,3 +1,4 @@
+'use client';
 import Link from 'next/link';
 import { useState } from 'react';
 import axios from 'axios';
@@ -5,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
-import { useRouter } from 'next/router';
+import { useRouter } from 'next/navigation';
 import React from 'react';
 import SparklesPreview from '@/components/sparklescont';
 
@@ -18,6 +19,15 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!email || !password) {
+      setError('Please fill out all fields.');
+      toast({
+        variant: 'destructive',
+        title: 'Uh oh! Something went wrong.',
+        description: { error },
+      });
+      return;
+    }
     try {
       const response = await axios.post('/api/login', { email, password });
       console.log(response.data);
