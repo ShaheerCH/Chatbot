@@ -1,0 +1,33 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Chatbot {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id])
+  name         String
+  model        String
+  systemPrompt String
+  messages     String      // JSON field to store messages
+  createdAt    DateTime  @default(now())
+  fileName     String
+  embeddings   Unsupported("vector(1536)") // Example for a 1536-dimensional vector
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  name      String
+  email     String    @unique
+  password  String
+  createdAt DateTime  @default(now())
+  chatbots  Chatbot[] // One-to-many relationship
+}
+
