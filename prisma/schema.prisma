@@ -16,10 +16,18 @@ model Chatbot {
   name         String
   model        String
   systemPrompt String
-  messages     String      // JSON field to store messages
-  createdAt    DateTime  @default(now())
   fileName     String
-  embeddings   Unsupported("vector(1536)") // Example for a 1536-dimensional vector
+  createdAt    DateTime  @default(now())
+  textChunks   TextChunk[] // Relation to the TextChunk model
+}
+
+model TextChunk {
+  id          Int      @id @default(autoincrement())
+  chatbotId   Int
+  chatbot     Chatbot  @relation(fields: [chatbotId], references: [id])
+  content     String   // The chunk of text
+  embedding   Unsupported("vector(1536)") // Use PostgreSQL's vector type
+  createdAt   DateTime @default(now())
 }
 
 model User {

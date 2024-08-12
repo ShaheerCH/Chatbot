@@ -45,6 +45,7 @@ export default function CreateFunction() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [OpenAiKey, setOpenAiKey] = useState('');
+  const token = localStorage.getItem('token');
 
   // --------------------------------------------------------
   const testOpenAIKey = async (apiKey) => {
@@ -122,6 +123,7 @@ export default function CreateFunction() {
       const response = await axios.post(`/api/create`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${token}`, 
         },
       });
       console.log(response.data);

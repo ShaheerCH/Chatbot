@@ -1,21 +1,33 @@
 import { PrismaClient } from '@prisma/client';
-import OpenAI from 'openai';
-import { normalizeEmbedding } from '@/lib/normalise';
 import pdfParse from 'pdf-parse';
+import { OpenAIEmbeddings } from '@langchain/openai';
+import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import jwt from 'jsonwebtoken';
 
 const prisma = new PrismaClient();
 
 export async function POST(request) {
-  const formData = await request.formData();
-  console.log('hello');
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) {
+    return new Response(JSON.stringify({ error: 'Authorization header missing' }), { status: 401 });
+  }
 
-  // Extracting form data
+  const token = authHeader.split(' ')[1];
+  let userId;
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    userId = decoded.id;
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401 });
+  }
+
+  const formData = await request.formData();
   const chatName = formData.get('chat_name');
   const sysMessage = formData.get('sys_message');
   const chatModel = formData.get('chat_model');
-  const temperature = parseFloat(formData.get('temperature'));
   const openaiKey = formData.get('openai_key');
-  const files = formData.getAll('files');  // Assuming files are uploaded
+  const files = formData.getAll('files');
 
   if (!chatName || !chatModel || !files.length || !openaiKey) {
     return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -23,78 +35,76 @@ export async function POST(request) {
     });
   }
 
-  // Initialize OpenAI with the provided key
-  const openai = new OpenAI({ apiKey: openaiKey });
+  const embeddings = new OpenAIEmbeddings({
+    openAIApiKey: openaiKey,
+    batchSize: 512,
+    model: 'text-embedding-3-small',
+  });
 
   try {
-    // Process each file and generate embeddings
-    let fileEmbeddings = [];
+    let textChunksData = [];
+
     for (const file of files) {
       let fileContent = '';
 
       if (file.type === 'application/pdf') {
-        // Extract text from the PDF
         const pdfBuffer = await file.arrayBuffer();
         const pdfData = await pdfParse(pdfBuffer);
         fileContent = pdfData.text;
       } else {
-        // Handle other file types (e.g., text files)
         fileContent = await file.text();
       }
 
-      // Generate embeddings using OpenAI
-      const embeddingResponse = await openai.embeddings.create({
-        model: 'text-embedding-3-small',  // Use the appropriate model
-        input: fileContent,
+      const splitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 1000,
+        overlap: 0,
       });
 
-      const embedding = embeddingResponse.data[0].embedding;
-      const normalizedEmbedding = normalizeEmbedding(embedding);
-      fileEmbeddings.push(normalizedEmbedding);
+      const documents = await splitter.createDocuments([fileContent]);
+      const documentContents = documents.map((doc) => doc.pageContent);
+
+      for (let i = 0; i < documentContents.length; i += embeddings.batchSize) {
+        const batch = documentContents.slice(i, i + embeddings.batchSize);
+        const embeddingsBatch = await embeddings.embedDocuments(batch);
+
+        embeddingsBatch.forEach((embedding, index) => {
+          textChunksData.push({
+            content: batch[index],
+            embedding: embedding,
+          });
+        });
+      }
     }
 
-    // Convert the embeddings array into a PostgreSQL vector type string
-    const embeddingVectors = fileEmbeddings.map(
-      (embedding) => `ARRAY[${embedding.join(', ')}]`
-    );
-
-    // Store the chatbot and its embeddings in the database
     const newChatbot = await prisma.chatbot.create({
       data: {
         name: chatName,
         model: chatModel,
-        systemPrompt: sysMessage,  // Store the system message as-is
-        embeddings: embeddingVectors.join(','),  // Store as a vector in PostgreSQL
-        fileName: files.length > 0 ? files[0].name : null,  // Simplified file handling
+        systemPrompt: sysMessage,
+        fileName: files.length > 0 ? files[0].name : null,
+        user: { connect: { id: userId } },
       },
     });
 
+    // Use raw SQL for inserting vector data
+    for (const chunk of textChunksData) {
+      await prisma.$executeRaw`
+        INSERT INTO "TextChunk" ("chatbotId", "content", "embedding")
+        VALUES (${newChatbot.id}, ${chunk.content}, ${chunk.embedding}::vector);
+      `;
+    }
+
     return new Response(
-      JSON.stringify({ message: 'Chatbot created successfully', chatbot: newChatbot }),
+      JSON.stringify({
+        message: 'Chatbot created successfully',
+        chatbot: newChatbot,
+      }),
       { status: 201 }
     );
   } catch (error) {
     console.error('Error creating chatbot:', error);
-    return new Response(
-      JSON.stringify({ error: 'Failed to create chatbot' }),
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ error: 'Failed to create chatbot' }), {
+      status: 500,
+    });
   }
 }
-
-
-
-// // export async function findSimilarEmbeddings(queryEmbedding) {
-// //     const normalizedEmbedding = normalizeEmbedding(queryEmbedding);
-// //     const embeddingVector = `ARRAY[${normalizedEmbedding.join(', ')}]`;
-  
-// //     const similarFiles = await prisma.$queryRaw`
-// //       SELECT id, fileName, embeddings,
-// //              embeddings <=> ${embeddingVector}::vector AS similarity
-// //       FROM "Chatbot"
-// //       ORDER BY similarity
-// //       LIMIT 10
-// //     `;
-  
-// //     return similarFiles;
-// //   }
