@@ -108,3 +108,52 @@ export async function POST(request) {
     });
   }
 }
+
+export async function GET(request) {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) {
+    return new Response(JSON.stringify({ error: 'Authorization header missing' }), { status: 401 });
+  }
+
+  const token = authHeader.split(' ')[1];
+  let userId;
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    userId = decoded.id;
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401 });
+  }
+
+  try {
+    const chatbots = await prisma.chatbot.findMany({
+      where: { userId: userId },
+      select: {
+        name: true,
+        model: true,
+        systemPrompt: true,
+        createdAt: true,
+      },
+    });
+
+    const result = chatbots.map((chatbot) => [
+      chatbot.name,
+      chatbot.model,
+      chatbot.systemPrompt,
+      chatbot.createdAt,
+    ]);
+
+    return new Response(
+      JSON.stringify({
+        message: 'Chatbots retrieved successfully',
+        chatbots: result,
+      }),
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Error retrieving chatbots:', error);
+    return new Response(JSON.stringify({ error: 'Failed to retrieve chatbots' }), {
+      status: 500,
+    });
+  }
+}
